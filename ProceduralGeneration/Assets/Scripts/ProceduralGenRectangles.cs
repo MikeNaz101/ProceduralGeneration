@@ -13,4 +13,8 @@ public class ProceduralGenRectangles : MonoBehaviour
     {
         
     }
+    void GenerateSpritey()
+    {
+        
+    }
 }
