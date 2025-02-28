@@ -5,15 +5,18 @@ using UnityEngine;
 public class ProceduralRoomGenerator : MonoBehaviour
 {
     // TODO: add randomizer to sizes
-    public int numRooms = 10;
+    private int numRooms = 10;
+    private List<Vector3> doorPositions = new List<Vector3>();
+    //private List<Vector3> doorSizes = new List<Vector3>(); // Store door size
     private List<Bounds> roomBounds = new List<Bounds>();
-    public Vector2 roomSizeMinMax = new Vector2(3,6);
-    public Vector2 bigRoomSize = new Vector2(100, 100);
+    private Vector2 roomSizeMinMax = new Vector2(5,20);
+    private Vector2 bigRoomSize = new Vector2(100, 100);
     public GameObject wallPrefab, doorPrefab, WindowPrefab;
     void Start()
     {
         GenerateBigRoom();
         GenerateRooms();
+        ConnectRooms();
     }
     
     void Update()
@@ -46,6 +49,7 @@ public class ProceduralRoomGenerator : MonoBehaviour
                 if (!IsOverlapping(newRoomBounds, roomBounds))
                 {
                     roomBounds.Add(newRoomBounds);
+                    //roomCenters.Add(newRoomBounds.center);
                     roomPlaced = true;
                     GameObject room = new GameObject("Room_" + i);
                     room.transform.position = new Vector3(posX, 0, posZ);
@@ -62,10 +66,9 @@ public class ProceduralRoomGenerator : MonoBehaviour
                 player.AddComponent<PlayerController>();
 
             }
-
             roomPlaced = false;
-            
         }
+        GenerateCorridors();
     }
     private bool IsOverlapping(Bounds newBounds, List<Bounds> existingBounds)
     {
@@ -94,20 +97,237 @@ public class ProceduralRoomGenerator : MonoBehaviour
             new Vector3(0.1f, wallHeight, height),
             new Vector3(0.1f, wallHeight, height)
         };
+        // Select two walls to have doors
+        int doorWall1 = Random.Range(0, 4);
+        int doorWall2;
+        do { doorWall2 = Random.Range(0, 4); } while (doorWall2 == doorWall1);
 
         for (int i = 0; i < 4; i++)
         {
-            GameObject wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            wall.transform.position = wallPosition[i];
-            wall.transform.localScale = wallScales[i];
-            wall.transform.parent = parent.transform;
+            if (i == doorWall1 || i == doorWall2)
+            {
+                GenerateWallWithDoor(parent, wallPosition[i], wallScales[i]);
+            }
+            else
+            {
+                GameObject wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                wall.transform.position = wallPosition[i];
+                wall.transform.localScale = wallScales[i];
+                wall.transform.parent = parent.transform;
+            }
         }
 
-        GenerateDoorAndWindows(parent, position, width, height, wallHeight);
+        //GenerateDoorAndWindows(parent, position, width, height, wallHeight);
 
     }
+    private void GenerateWallWithDoor(GameObject parent, Vector3 position, Vector3 scale)
+    {
+        float doorWidth = 1.5f;
+        float doorHeight = 2.0f;
+        float wallThickness = 0.1f;
 
-    public void GenerateDoorAndWindows(GameObject parent, Vector3 position, float width, float height, float wallHeight)
+        bool isHorizontal = scale.x > scale.z; // Check if the wall runs along the X-axis
+
+        Vector3 leftWallPos, rightWallPos;
+        Vector3 leftWallScale, rightWallScale;
+
+        if (isHorizontal)
+        {
+            // Splitting a horizontal wall (X-axis)
+            float halfRemainingWidth = (scale.x - doorWidth) / 2;
+            Debug.Log("horizonal wall with door!");
+            leftWallPos = position + new Vector3(-doorWidth / 2 - halfRemainingWidth / 2, 0, 0);
+            rightWallPos = position + new Vector3(doorWidth / 2 + halfRemainingWidth / 2, 0, 0);
+
+            leftWallScale = new Vector3(halfRemainingWidth, scale.y, wallThickness);
+            rightWallScale = new Vector3(halfRemainingWidth, scale.y, wallThickness);
+        }
+        else
+        {
+            // Splitting a vertical wall (Z-axis)
+            float halfRemainingHeight = (scale.z - doorWidth) / 2;
+
+            leftWallPos = position + new Vector3(0, 0, -doorWidth / 2 - halfRemainingHeight / 2);
+            rightWallPos = position + new Vector3(0, 0, doorWidth / 2 + halfRemainingHeight / 2);
+
+            leftWallScale = new Vector3(wallThickness, scale.y, halfRemainingHeight);
+            rightWallScale = new Vector3(wallThickness, scale.y, halfRemainingHeight);
+        }
+
+        // Create left part of the wall
+        if (leftWallScale.x > 0 && leftWallScale.z > 0)
+        {
+            GameObject leftWall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            leftWall.transform.position = leftWallPos;
+            leftWall.transform.localScale = leftWallScale;
+            leftWall.transform.parent = parent.transform;
+        }
+
+        // Create right part of the wall
+        if (rightWallScale.x > 0 && rightWallScale.z > 0)
+        {
+            GameObject rightWall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            rightWall.transform.position = rightWallPos;
+            rightWall.transform.localScale = rightWallScale;
+            rightWall.transform.parent = parent.transform;
+        }
+
+        // Create the door
+        Vector3 doorPosition = new Vector3(position.x, doorHeight / 2, position.z);
+        GameObject door = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        door.transform.position = doorPosition;
+        door.transform.localScale = new Vector3(isHorizontal ? doorWidth : wallThickness, doorHeight, isHorizontal ? wallThickness : doorWidth);
+        doorPositions.Add(door.transform.position);
+        door.GetComponent<Renderer>().material.color = Color.blue;
+        door.transform.parent = parent.transform;
+    }
+
+    private void GenerateCorridors()
+    {
+        List<(Vector3, Vector3)> corridors = new List<(Vector3, Vector3)>();
+
+        HashSet<int> connectedDoors = new HashSet<int>();
+        connectedDoors.Add(0); // Start from the first door
+
+        while (connectedDoors.Count < doorPositions.Count)
+        {
+            int closestDoorA = -1;
+            int closestDoorB = -1;
+            float minDistance = float.MaxValue;
+
+            foreach (int doorA in connectedDoors)
+            {
+                for (int doorB = 0; doorB < doorPositions.Count; doorB++)
+                {
+                    if (connectedDoors.Contains(doorB)) continue;
+
+                    float distance = Vector3.Distance(doorPositions[doorA], doorPositions[doorB]);
+                    if (distance < minDistance)
+                    {
+                        minDistance = distance;
+                        closestDoorA = doorA;
+                        closestDoorB = doorB;
+                    }
+                }
+            }
+
+            if (closestDoorA != -1 && closestDoorB != -1)
+            {
+                connectedDoors.Add(closestDoorB);
+                corridors.Add((doorPositions[closestDoorA], doorPositions[closestDoorB]));
+            }
+        }
+
+        // Generate tunnels between doors
+        foreach (var (doorA, doorB) in corridors)
+        {
+            CreateCorridorTunnel(doorA, doorB);
+        }
+    }
+
+
+    // Connect rooms with corridors
+    private void ConnectRooms()
+    {
+        for (int i = 0; i < doorPositions.Count - 1; i++)
+        {
+            Vector3 door1 = doorPositions[i];
+            Vector3 door2 = doorPositions[i + 1];
+            CreateCorridorTunnel(door1, door2); // Create a tunnel between doors
+        }
+    }
+
+    private void CreateCorridorTunnel(Vector3 door1Pos, Vector3 door2Pos)
+    {
+        Vector3 direction = (door2Pos - door1Pos).normalized;
+        float corridorLength = Vector3.Distance(door1Pos, door2Pos);
+
+        float corridorWidth = 1.5f;  // Keep a consistent width
+        float corridorHeight = 2.0f; // Keep a consistent height
+        float wallThickness = 0.2f;
+
+        Vector3 corridorCenter = (door1Pos + door2Pos) / 2;
+
+        // Create floor
+        GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        floor.transform.position = corridorCenter + new Vector3(0, -corridorHeight / 2, 0);
+        floor.transform.localScale = new Vector3(
+            Mathf.Abs(direction.x) > Mathf.Abs(direction.z) ? corridorLength : corridorWidth,
+            wallThickness,
+            Mathf.Abs(direction.z) > Mathf.Abs(direction.x) ? corridorLength : corridorWidth
+        );
+
+        // Create ceiling
+        GameObject ceiling = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        ceiling.transform.position = corridorCenter + new Vector3(0, corridorHeight / 2, 0);
+        ceiling.transform.localScale = floor.transform.localScale;
+
+        // Left Wall
+        GameObject leftWall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        leftWall.transform.position = corridorCenter + new Vector3(
+            direction.z * corridorWidth / 2, 0, -direction.x * corridorWidth / 2
+        );
+        leftWall.transform.localScale = new Vector3(
+            Mathf.Abs(direction.x) > Mathf.Abs(direction.z) ? corridorLength : wallThickness,
+            corridorHeight,
+            Mathf.Abs(direction.z) > Mathf.Abs(direction.x) ? corridorLength : wallThickness
+        );
+
+        // Right Wall
+        GameObject rightWall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        rightWall.transform.position = corridorCenter + new Vector3(
+            -direction.z * corridorWidth / 2, 0, direction.x * corridorWidth / 2
+        );
+        rightWall.transform.localScale = leftWall.transform.localScale;
+    }
+
+
+
+
+
+
+    /*private void GenerateWallWithDoor(GameObject parent, Vector3 position, Vector3 scale)
+    {
+        float doorWidth = 1.5f;
+        float doorHeight = 2.0f;
+        float wallThickness = 0.1f;
+
+        // Split the wall into two parts to create space for the door
+        Vector3 leftWallPos = position + new Vector3(-doorWidth / 2, 0, 0);
+        Vector3 rightWallPos = position + new Vector3(doorWidth / 2, 0, 0);
+
+        Vector3 leftWallScale = new Vector3(scale.x / 2 - doorWidth / 2, scale.y, wallThickness);
+        Vector3 rightWallScale = new Vector3(scale.x / 2 - doorWidth / 2, scale.y, wallThickness);
+
+        // Left part of the wall
+        if (leftWallScale.x > 0)
+        {
+            GameObject leftWall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            leftWall.transform.position = leftWallPos;
+            leftWall.transform.localScale = leftWallScale;
+            leftWall.transform.parent = parent.transform;
+        }
+
+        // Right part of the wall
+        if (rightWallScale.x > 0)
+        {
+            GameObject rightWall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            rightWall.transform.position = rightWallPos;
+            rightWall.transform.localScale = rightWallScale;
+            rightWall.transform.parent = parent.transform;
+        }
+
+        // Create the door
+        Vector3 doorPosition = new Vector3(position.x, doorHeight / 2, position.z);
+        GameObject door = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        door.transform.position = doorPosition;
+        door.transform.localScale = new Vector3(doorWidth, doorHeight, wallThickness);
+        door.GetComponent<Renderer>().material.color = Color.blue;
+        door.transform.parent = parent.transform;
+    }*/
+
+
+    /*public void GenerateDoorAndWindows(GameObject parent, Vector3 position, float width, float height, float wallHeight)
     {
         Vector3 doorPosition = new Vector3(position.x, 1, position.z - height / 2);
         GameObject door = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -122,5 +342,5 @@ public class ProceduralRoomGenerator : MonoBehaviour
         window.transform.localScale = new Vector3(0.1f, 1, 1);
         window.GetComponent<Renderer>().material.color = Color.red;
         window.transform.parent = parent.transform;
-    }
+    }*/
 }
